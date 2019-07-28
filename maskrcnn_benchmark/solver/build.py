@@ -1,7 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 import torch
 
-from .lr_scheduler import WarmupMultiStepLR
+from .lr_scheduler import WarmupMultiStepLR, WarmupResetEpochStepLR
 
 
 def make_optimizer(cfg, model):
@@ -16,11 +16,19 @@ def make_optimizer(cfg, model):
             weight_decay = cfg.SOLVER.WEIGHT_DECAY_BIAS
         params += [{"params": [value], "lr": lr, "weight_decay": weight_decay}]
 
-    optimizer = torch.optim.SGD(params, lr, momentum=cfg.SOLVER.MOMENTUM)
+    #optimizer = torch.optim.SGD(params, lr, momentum=cfg.SOLVER.MOMENTUM)
+    optimizer = torch.optim.Adam(params, lr)
     return optimizer
 
 
 def make_lr_scheduler(cfg, optimizer):
+    if cfg.SOLVER.WARMUP_METHOD == 'warmup_reset_per_epoch':
+        return WarmupResetEpochStepLR(optimizer,
+                                      gamma=cfg.SOLVER.GAMMA,
+                                      warmup_factor=cfg.SOLVER.WARMUP_FACTOR,
+                                      warmup_iters=cfg.SOLVER.WARMUP_ITERS,
+                                      )
+
     return WarmupMultiStepLR(
         optimizer,
         cfg.SOLVER.STEPS,

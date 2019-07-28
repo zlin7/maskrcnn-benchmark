@@ -46,6 +46,7 @@ CACHE_PATH = "/media/zhen/Research/deepsz_pytorch/"
 import tools.pretrail_utils as putils
 
 
+import collections
 def do_train(
         args,
         model,
@@ -63,17 +64,24 @@ def do_train(
     curr_iter, curr_base = start_iter, 0
     start_training_time = time.time()
     end = time.time()
-    val_hist = {"loss":{}, "acc":{}}
+    val_hist = {"loss":{}, "acc":{}, "F1":{}}
+
+    best_val_F1, best_val_iter = None, None
+
     train_hist = {'loss':{}, "acc":{}}
+    #curr_ratio = 1
     for epoch in range(args.num_epochs):
+        #if curr_ratio != 0 and curr_ratio == (epoch // args.change_ratio_after):
+        #    optimizer.state = collections.defaultdict(dict)
+
         curr_ratio = (epoch // args.change_ratio_after) + 1
         curr_ratio = min(curr_ratio, args.ratio_up_to)
         data_loader = putils.DEEPSZ(which='train', ratio=curr_ratio, oversample_pos=True)
-        max_iter_curr_epoch = len(data_loader)
+        max_iter_curr_epoch = int(np.round(len(data_loader) / (1+curr_ratio) * (55 / 54.)))
         if max_iter_curr_epoch < curr_iter - curr_base:
             curr_base += max_iter_curr_epoch
             continue
-
+        arguments["epoch"] = epoch
         for curr_i in putils.ProgressBar(range(curr_iter - curr_base, max_iter_curr_epoch)):
             images, targets, _ = data_loader[curr_i]
             model.train()
@@ -86,8 +94,10 @@ def do_train(
 
             curr_iter = curr_iter + 1
             arguments["iteration"] = curr_iter
-
+            arguments["curr_iter_this_epoch"] = curr_i
             scheduler.step()
+            #scheduler.step_wrap(curr_iter)
+            #scheduler.step_iter(arguments["epoch"], arguments["curr_iter_this_epoch"])
 
             images = images.to(device)
             targets = targets.to(device)
@@ -118,6 +128,7 @@ def do_train(
             eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
 
             if curr_iter % 20 == 0:
+                #ipdb.set_trace()
                 logger.info(
                     meters.delimiter.join(
                         [
@@ -139,12 +150,17 @@ def do_train(
                 )
                 if curr_iter % 100 == 0:
                     val_ret = run_test(model, cfg, args, which='valid', ratio=curr_ratio)
+                    _thres, _F1 = putils.get_F1(val_ret['y_pred'], val_ret['y'])
                     val_hist['loss'][curr_iter] = val_ret['loss']
                     val_hist['acc'][curr_iter] = val_ret['acc']
                     print(val_ret)
+                    if best_val_F1 is None or _F1 > best_val_F1:
+                        best_val_F1, best_val_iter = _F1, curr_iter
+                        if _F1 > 0.5: checkpointer.save("model_best", **arguments)
             if curr_iter % checkpoint_period == 0:
                 checkpointer.save("model_{:d}-{:07d}".format(epoch, curr_iter), **arguments)
-        ret = run_test(model, cfg, args, which='test', ratio=None)
+            #scheduler.step_iter(arguments["epoch"], arguments["curr_iter_this_epoch"])
+        ret = {} if epoch < 2 else run_test(model, cfg, args, which='test', ratio=None)
         ret = {"test": ret, "val":val_hist, "train":train_hist}
         curr_base += max_iter_curr_epoch
 
@@ -192,6 +208,8 @@ def train(cfg, args):
     )
     extra_checkpoint_data = checkpointer.load(cfg.MODEL.WEIGHT)
     arguments.update(extra_checkpoint_data)
+    #scheduler.last_iter_this_epoch = arguments.get('curr_iter_this_epoch', -1)
+    #scheduler.last_epoch = arguments.get('epoch', -1)
     #ipdb.set_trace()
 
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
@@ -311,7 +329,7 @@ def main():
     if output_dir:
         mkdir(output_dir)
 
-    logger = setup_logger("maskrcnn_benchmark", output_dir, get_rank())
+    logger = setup_logger("maskrcnn_benchmark", output_dir, get_rank())#, stream_file=os.path.join(output_dir, "log.log"))
     logger.info("Using {} GPUs".format(num_gpus))
     logger.info(args)
 
@@ -336,4 +354,5 @@ def main():
 
 
 if __name__ == "__main__":
+    torch.manual_seed(7)
     main()
