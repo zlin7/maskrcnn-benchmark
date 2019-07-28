@@ -12,7 +12,7 @@ from maskrcnn_benchmark.structures.image_list import to_image_list
 import maskrcnn_benchmark.modeling.backbone.resnet as mod_resnet
 from collections import OrderedDict
 import torch.nn.functional as F
-
+import ipdb
 
 
 def build_resnet_backbone(cfg):
@@ -34,7 +34,10 @@ class PretrainCNN(nn.Module):
         #self.rpn = build_rpn(cfg, self.backbone.out_channels)
         #self.roi_heads = build_roi_heads(cfg, self.backbone.out_channels)
         #self.fc = nn.Linear(self.backbone.out_channels * 7, 2)
-        self.fc = nn.Linear(4096, 2)
+        self.batch_norm = nn.BatchNorm1d(4096)
+        self.fc = nn.Linear(4096, 256)
+        self.fc1 = nn.Linear(256, 256)
+        self.fc2 = nn.Linear(256, 2)
 
     def forward(self, images, targets=None):
         """
@@ -54,26 +57,15 @@ class PretrainCNN(nn.Module):
         images = to_image_list(images)
         features = self.backbone(images.tensors)
         features_flat = torch.cat([torch.flatten(x, 1) for x in features])
-        features2 = self.fc(features_flat)
-        softmax = F.softmax(features2, dim=0)
+        features_flat = self.batch_norm(features_flat)
+
+        features1 = F.relu_(self.fc(features_flat))
+        features2 = F.relu_(self.fc1(features1))
+        pred = F.relu_(self.fc2(features2))
+
+        softmax = F.softmax(pred, dim=1)
+        #ipdb.set_trace()
         if self.training:
             loss = F.binary_cross_entropy(softmax, targets)
             return {"loss_classifier":loss}
         return softmax
-
-        proposals, proposal_losses = self.rpn(images, features, targets)
-        if self.roi_heads:
-            x, result, detector_losses = self.roi_heads(features, proposals, targets)
-        else:
-            # RPN-only models don't have roi_heads
-            x = features
-            result = proposals
-            detector_losses = {}
-
-        if self.training:
-            losses = {}
-            losses.update(detector_losses)
-            losses.update(proposal_losses)
-            return losses
-
-        return result

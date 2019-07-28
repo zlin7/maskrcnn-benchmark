@@ -375,18 +375,29 @@ class BaseStem_deepsz1(nn.Module):
         out_channels = cfg.MODEL.RESNETS.STEM_OUT_CHANNELS
 
         self.conv1 = Conv2d(
-            3, out_channels, kernel_size=7, stride=2, padding=3, bias=False
+            3, out_channels, kernel_size=3, stride=1, padding=1, bias=False
         )
         self.bn1 = norm_func(out_channels)
 
-        for l in [self.conv1,]:
-            nn.init.kaiming_uniform_(l.weight, a=1)
+
+        self.conv2 = Conv2d(
+            out_channels, out_channels, kernel_size=3, stride=2, padding=1, bias=False
+        )
+        self.bn2 = norm_func(out_channels)
+
+        #for l in [self.conv1, self.conv2]:
+        #    nn.init.kaiming_uniform_(l.weight, a=1)
 
     def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
         x = F.relu_(x)
-        x = F.max_pool2d(x, kernel_size=3, stride=2, padding=1)
+
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = F.relu_(x)
+
+        x = F.max_pool2d(x, kernel_size=2, stride=2, padding=0)
         return x
 
 class StemWithNotFixedBatchNorm_deepsz1(BaseStem_deepsz1):
@@ -400,6 +411,32 @@ class StemWithFixedBatchNorm_deepsz1(BaseStem_deepsz1):
         super(StemWithFixedBatchNorm_deepsz1, self).__init__(
             cfg, norm_func=FrozenBatchNorm2d
         )
+
+
+class BottleneckWithNoFixedBatchNorm(Bottleneck):
+    def __init__(
+        self,
+        in_channels,
+        bottleneck_channels,
+        out_channels,
+        num_groups=1,
+        stride_in_1x1=True,
+        stride=1,
+        dilation=1,
+        dcn_config={}
+    ):
+        super(BottleneckWithNoFixedBatchNorm, self).__init__(
+            in_channels=in_channels,
+            bottleneck_channels=bottleneck_channels,
+            out_channels=out_channels,
+            num_groups=num_groups,
+            stride_in_1x1=stride_in_1x1,
+            stride=stride,
+            dilation=dilation,
+            norm_func=nn.BatchNorm2d,
+            dcn_config=dcn_config
+        )
+
 
 
 class BottleneckWithFixedBatchNorm(Bottleneck):
@@ -467,6 +504,7 @@ class StemWithGN(BaseStem):
 _TRANSFORMATION_MODULES = Registry({
     "BottleneckWithFixedBatchNorm": BottleneckWithFixedBatchNorm,
     "BottleneckWithGN": BottleneckWithGN,
+    "BottleneckWithNoFixedBatchNorm":BottleneckWithNoFixedBatchNorm,
 })
 
 _STEM_MODULES = Registry({

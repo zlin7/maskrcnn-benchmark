@@ -126,7 +126,7 @@ from maskrcnn_benchmark.structures.bounding_box import BoxList
 class DEEPSZ(object):
 
     def __init__(self, which='train', batch_size=128, component='skymap',
-                 ratio=None,
+                 ratio=1,
                  data_path = DATA_PATH,
                  seed=0, min_redshift=0.25, min_mvir=2e14,
                  resolution=0.25, normalize=True, oversample_pos=False):

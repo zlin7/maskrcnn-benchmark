@@ -4,12 +4,15 @@ MODEL:
   RESNETS:
     BACKBONE_OUT_CHANNELS: 1024
     STEM_FUNC: "StemWithNotFixedBatchNorm_deepsz1"
-    TRANS_FUNC: "BottleneckWithFixedBatchNorm"
+    TRANS_FUNC: "BottleneckWithNoFixedBatchNorm"
   BACKBONE:
     CONV_BODY: "R-50-C4"
+    FREEZE_CONV_BODY_AT: -1
 
 SOLVER:
-  BASE_LR: 0.02
-  WEIGHT_DECAY: 0.0001
+  BASE_LR: 0.005
+  WEIGHT_DECAY: 0.002
   STEPS: (60000, 80000)
   MAX_ITER: 90000
+
+OUTPUT_DIR: "/media/zhen/Research/deepsz_pytorch/"
