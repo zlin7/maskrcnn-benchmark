@@ -11,6 +11,7 @@ import logging
 import time
 import argparse
 import os
+import pandas as pd
 
 import torch
 from maskrcnn_benchmark.config import cfg
@@ -48,7 +49,6 @@ import tools.pretrail_utils as putils
 def do_train(
         args,
         model,
-        data_loader,
         optimizer,
         scheduler,
         checkpointer,
@@ -59,35 +59,48 @@ def do_train(
     logger = logging.getLogger("maskrcnn_benchmark.trainer")
     logger.info("Start training")
     meters = MetricLogger(delimiter="  ")
-    max_iter = len(data_loader)
     start_iter = arguments["iteration"]
-    model.train()
+    curr_iter, curr_base = start_iter, 0
     start_training_time = time.time()
     end = time.time()
+    val_hist = {"loss":{}, "acc":{}}
+    train_hist = {'loss':{}, "acc":{}}
     for epoch in range(args.num_epochs):
-        for iteration, (images, targets, _) in enumerate(data_loader, start_iter):
+        curr_ratio = (epoch // args.change_ratio_after) + 1
+        curr_ratio = min(curr_ratio, args.ratio_up_to)
+        data_loader = putils.DEEPSZ(which='train', ratio=curr_ratio, oversample_pos=True)
+        max_iter_curr_epoch = len(data_loader)
+        if max_iter_curr_epoch < curr_iter - curr_base:
+            curr_base += max_iter_curr_epoch
+            continue
+
+        for curr_i in putils.ProgressBar(range(curr_iter - curr_base, max_iter_curr_epoch)):
+            images, targets, _ = data_loader[curr_i]
+            model.train()
 
             if any(len(target) < 1 for target in targets):
                 logger.error(
-                    f"Iteration={iteration + 1} || Image Ids used for training {_} || targets Length={[len(target) for target in targets]}")
+                    f"Iteration={curr_iter + 1} || Image Ids used for training {_} || targets Length={[len(target) for target in targets]}")
                 continue
             data_time = time.time() - end
-            iteration = iteration + 1
-            arguments["iteration"] = iteration
+
+            curr_iter = curr_iter + 1
+            arguments["iteration"] = curr_iter
 
             scheduler.step()
 
             images = images.to(device)
             targets = targets.to(device)
 
-            loss_dict = model(images, targets)
+            loss_dict, softmax = model(images, targets)
+            train_hist['loss'][curr_iter] = float(loss_dict['loss_classifier'].cpu().detach())
+            _y = targets[:,1].cpu().detach().numpy().astype(int)
+            _yhat = (softmax[:,1].cpu().detach().numpy() > 0.5).astype(int)
+            train_hist['acc'][curr_iter] = (_yhat == _y).astype(float).mean()
 
             losses = sum(loss for loss in loss_dict.values())
 
             # reduce losses over all GPUs for logging purposes
-            #loss_dict_reduced = reduce_loss_dict(loss_dict)
-            #losses_reduced = sum(loss for loss in loss_dict_reduced.values())
-            #meters.update(loss=losses_reduced, **loss_dict_reduced)
             meters.update(loss=losses, **loss_dict)
 
             optimizer.zero_grad()
@@ -101,13 +114,14 @@ def do_train(
             end = time.time()
             meters.update(time=batch_time, data=data_time)
 
-            eta_seconds = meters.time.global_avg * (max_iter - iteration)
+            eta_seconds = meters.time.global_avg * (max_iter_curr_epoch - curr_iter)
             eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
 
-            if iteration % 20 == 0 or iteration == max_iter:
+            if curr_iter % 20 == 0:
                 logger.info(
                     meters.delimiter.join(
                         [
+                            "ratio: {ratio}",
                             "eta: {eta}",
                             "iter: {iter}",
                             "{meters}",
@@ -115,25 +129,41 @@ def do_train(
                             "max mem: {memory:.0f}",
                         ]
                     ).format(
+                        ratio=curr_ratio,
                         eta=eta_string,
-                        iter=iteration,
+                        iter=curr_iter,
                         meters=str(meters),
                         lr=optimizer.param_groups[0]["lr"],
                         memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0,
                     )
                 )
-            if iteration % checkpoint_period == 0:
-                checkpointer.save("model_{:07d}".format(iteration), **arguments)
-            if iteration == max_iter:
-                checkpointer.save("model_final", **arguments)
+                if curr_iter % 100 == 0:
+                    val_ret = run_test(model, cfg, args, which='valid', ratio=curr_ratio)
+                    val_hist['loss'][curr_iter] = val_ret['loss']
+                    val_hist['acc'][curr_iter] = val_ret['acc']
+                    print(val_ret)
+            if curr_iter % checkpoint_period == 0:
+                checkpointer.save("model_{:d}-{:07d}".format(epoch, curr_iter), **arguments)
+        ret = run_test(model, cfg, args, which='test', ratio=None)
+        ret = {"test": ret, "val":val_hist, "train":train_hist}
+        curr_base += max_iter_curr_epoch
+
+        to_pickle(ret, os.path.join(cfg.OUTPUT_DIR, "results", "epoch%d.pkl"%epoch))
+
+    checkpointer.save("model_final", **arguments)
 
     total_training_time = time.time() - start_training_time
     total_time_str = str(datetime.timedelta(seconds=total_training_time))
     logger.info(
         "Total training time: {} ({:.4f} s / it)".format(
-            total_time_str, total_training_time / (max_iter)
+            total_time_str, total_training_time / (max_iter_curr_epoch)
         )
     )
+
+def to_pickle(d, path):
+    if not os.path.isdir(os.path.dirname(path)):
+        os.makedirs(os.path.dirname(path))
+    return pd.to_pickle(d,path)
 
 def train(cfg, args):
     #model = grcnn.GeneralizedRCNN(cfg)#TODO: change this
@@ -164,14 +194,11 @@ def train(cfg, args):
     arguments.update(extra_checkpoint_data)
     #ipdb.set_trace()
 
-    data_loader = putils.DEEPSZ(which='train')
-
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
     do_train(
         args,
         model,
-        data_loader,
         optimizer,
         scheduler,
         checkpointer,
@@ -183,27 +210,32 @@ def train(cfg, args):
     return model
 
 
-def run_test(model, cfg, args):
+def run_test(model, cfg, args, **kwargs):
 
     device = torch.device(cfg.MODEL.DEVICE)
 
     torch.cuda.empty_cache()  # TODO check if it helps
-    data_loader = putils.DEEPSZ(which='valid')
+    data_loader = putils.DEEPSZ(**kwargs)
     model.eval()
     output_folder = os.path.join(CACHE_PATH, "")
     if not os.path.isdir(output_folder): os.makedirs(output_folder)
 
     y_preds, ys = [], []
+    losses = []
     for epoch in range(args.num_epochs):
         for iteration, (images, targets, _) in enumerate(data_loader, 0):
             images = images.to(device)
-            softmax = model(images)
+            targets = targets.to(device)
+            loss_dict, softmax = model(images, targets)
+            losses.append(float(loss_dict['loss_classifier'].cpu().detach()))
             y_preds.append(softmax[:,1].cpu().detach().numpy())
             ys.append(targets[:, 1].cpu().detach().numpy())
-    ret = {"y_pred":np.concatenate(y_preds),"y":np.concatenate(ys).astype(int)}
 
-    acc = ((ret['y_pred'] > 0.5).astype(int) == ret['y']).astype(float).mean()
-    print("Accuracy = {}".format(acc))
+    ret = {"y_pred":np.concatenate(y_preds),
+           "y":np.concatenate(ys).astype(int),
+           "loss": np.asarray(losses).mean()}
+
+    ret['acc'] = ((ret['y_pred'] > 0.5).astype(int) == ret['y']).astype(float).mean()
     return ret
 
 
@@ -229,9 +261,25 @@ def main():
     parser.add_argument(
         "--num_epochs",
         help="",
+        default=20,
+        type=int,
+    )
+
+
+    parser.add_argument(
+        "--ratio_up_to",
+        help="",
+        default=20,
+        type=int,
+    )
+
+    parser.add_argument(
+        "--change_ratio_after",
+        help="",
         default=1,
         type=int,
     )
+
 
     parser.add_argument(
         "opts",
@@ -244,11 +292,19 @@ def main():
 
     args = parser.parse_args()
 
+
     num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
     args.distributed = False
 
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
+
+    output_path = os.path.join(CACHE_PATH, "ratio{}-{}_convbody={}_lr={}_wd={}".format(args.change_ratio_after,
+                                                                                       args.ratio_up_to,
+                                                                                       cfg['MODEL']['BACKBONE']['CONV_BODY'],
+                                                                                       cfg['SOLVER']['BASE_LR'],
+                                                                                       cfg['SOLVER']['WEIGHT_DECAY']))
+    cfg.merge_from_list(["OUTPUT_DIR", output_path])
     cfg.freeze()
 
     output_dir = cfg.OUTPUT_DIR

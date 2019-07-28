@@ -65,6 +65,8 @@ class PretrainCNN(nn.Module):
 
         softmax = F.softmax(pred, dim=1)
         #ipdb.set_trace()
+        loss = F.binary_cross_entropy(softmax, targets)
+        return {"loss_classifier": loss}, softmax
         if self.training:
             loss = F.binary_cross_entropy(softmax, targets)
             return {"loss_classifier":loss}
