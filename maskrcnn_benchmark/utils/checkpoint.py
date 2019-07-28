@@ -10,6 +10,7 @@ from maskrcnn_benchmark.utils.imports import import_file
 from maskrcnn_benchmark.utils.model_zoo import cache_url
 
 
+import ipdb
 class Checkpointer(object):
     def __init__(
         self,
@@ -50,6 +51,7 @@ class Checkpointer(object):
         self.tag_last_checkpoint(save_file)
 
     def load(self, f=None, use_latest=True):
+        #ipdb.set_trace()
         if self.has_checkpoint() and use_latest:
             # override argument with existing checkpoint
             f = self.get_checkpoint_file()
@@ -116,6 +118,7 @@ class DetectronCheckpointer(Checkpointer):
 
     def _load_file(self, f):
         # catalog lookup
+        ipdb.set_trace()
         if f.startswith("catalog://"):
             paths_catalog = import_file(
                 "maskrcnn_benchmark.config.paths_catalog", self.cfg.PATHS_CATALOG, True

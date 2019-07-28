@@ -39,6 +39,9 @@ StageSpec = namedtuple(
     ],
 )
 
+
+
+
 # -----------------------------------------------------------------------------
 # Standard ResNet models
 # -----------------------------------------------------------------------------
@@ -365,6 +368,39 @@ class BaseStem(nn.Module):
         x = F.max_pool2d(x, kernel_size=3, stride=2, padding=1)
         return x
 
+class BaseStem_deepsz1(nn.Module):
+    def __init__(self, cfg, norm_func):
+        super(BaseStem_deepsz1, self).__init__()
+
+        out_channels = cfg.MODEL.RESNETS.STEM_OUT_CHANNELS
+
+        self.conv1 = Conv2d(
+            3, out_channels, kernel_size=7, stride=2, padding=3, bias=False
+        )
+        self.bn1 = norm_func(out_channels)
+
+        for l in [self.conv1,]:
+            nn.init.kaiming_uniform_(l.weight, a=1)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = F.relu_(x)
+        x = F.max_pool2d(x, kernel_size=3, stride=2, padding=1)
+        return x
+
+class StemWithNotFixedBatchNorm_deepsz1(BaseStem_deepsz1):
+    def __init__(self, cfg):
+        super(StemWithNotFixedBatchNorm_deepsz1, self).__init__(
+            cfg, norm_func=nn.BatchNorm2d
+        )
+
+class StemWithFixedBatchNorm_deepsz1(BaseStem_deepsz1):
+    def __init__(self, cfg):
+        super(StemWithFixedBatchNorm_deepsz1, self).__init__(
+            cfg, norm_func=FrozenBatchNorm2d
+        )
+
 
 class BottleneckWithFixedBatchNorm(Bottleneck):
     def __init__(
@@ -436,6 +472,8 @@ _TRANSFORMATION_MODULES = Registry({
 _STEM_MODULES = Registry({
     "StemWithFixedBatchNorm": StemWithFixedBatchNorm,
     "StemWithGN": StemWithGN,
+    "StemWithNotFixedBatchNorm_deepsz1": StemWithNotFixedBatchNorm_deepsz1,
+    #"StemWithFixedBatchNorm_deepsz1": StemWithFixedBatchNorm_deepsz1
 })
 
 _STAGE_SPECS = Registry({

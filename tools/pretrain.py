@@ -6,7 +6,9 @@ Basic training script for PyTorch
 # Set up custom environment before nearly anything else is imported
 # NOTE: this should be the first import (no not reorder)
 from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:skip
-
+import datetime
+import logging
+import time
 import argparse
 import os
 
@@ -16,7 +18,6 @@ from maskrcnn_benchmark.data import make_data_loader
 from maskrcnn_benchmark.solver import make_lr_scheduler
 from maskrcnn_benchmark.solver import make_optimizer
 from maskrcnn_benchmark.engine.inference import inference
-from maskrcnn_benchmark.engine.trainer import do_train
 from maskrcnn_benchmark.modeling.detector import build_detection_model
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.collect_env import collect_env_info
@@ -33,8 +34,108 @@ except ImportError:
     raise ImportError('Use APEX for multi-precision via apex.amp')
 
 
-def train(cfg, local_rank, distributed):
-    model = build_detection_model(cfg)#TODO: change this
+from maskrcnn_benchmark.utils.metric_logger import MetricLogger
+#import maskrcnn_benchmark.modeling.detector.generalized_rcnn as grcnn
+import maskrcnn_benchmark.modeling.detector.pertrain_cnn as pcnn
+
+CACHE_PATH = "/media/zhen/Research/deepsz_pytorch/"
+
+import tools.pretrail_utils as putils
+
+
+def do_train(
+        model,
+        data_loader,
+        optimizer,
+        scheduler,
+        checkpointer,
+        device,
+        checkpoint_period,
+        arguments,
+):
+    logger = logging.getLogger("maskrcnn_benchmark.trainer")
+    logger.info("Start training")
+    meters = MetricLogger(delimiter="  ")
+    max_iter = len(data_loader)
+    start_iter = arguments["iteration"]
+    model.train()
+    start_training_time = time.time()
+    end = time.time()
+    for iteration, (images, targets, _) in enumerate(data_loader, start_iter):
+
+        if any(len(target) < 1 for target in targets):
+            logger.error(
+                f"Iteration={iteration + 1} || Image Ids used for training {_} || targets Length={[len(target) for target in targets]}")
+            continue
+        data_time = time.time() - end
+        iteration = iteration + 1
+        arguments["iteration"] = iteration
+
+        scheduler.step()
+
+        images = images.to(device)
+        targets = targets.to(device)
+
+        loss_dict = model(images, targets)
+
+        losses = sum(loss for loss in loss_dict.values())
+
+        # reduce losses over all GPUs for logging purposes
+        #loss_dict_reduced = reduce_loss_dict(loss_dict)
+        #losses_reduced = sum(loss for loss in loss_dict_reduced.values())
+        #meters.update(loss=losses_reduced, **loss_dict_reduced)
+        meters.update(loss=losses, **loss_dict)
+
+        optimizer.zero_grad()
+        # Note: If mixed precision is not used, this ends up doing nothing
+        # Otherwise apply loss scaling for mixed-precision recipe
+        with amp.scale_loss(losses, optimizer) as scaled_losses:
+            scaled_losses.backward()
+        optimizer.step()
+
+        batch_time = time.time() - end
+        end = time.time()
+        meters.update(time=batch_time, data=data_time)
+
+        eta_seconds = meters.time.global_avg * (max_iter - iteration)
+        eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+
+        if iteration % 20 == 0 or iteration == max_iter:
+            logger.info(
+                meters.delimiter.join(
+                    [
+                        "eta: {eta}",
+                        "iter: {iter}",
+                        "{meters}",
+                        "lr: {lr:.6f}",
+                        "max mem: {memory:.0f}",
+                    ]
+                ).format(
+                    eta=eta_string,
+                    iter=iteration,
+                    meters=str(meters),
+                    lr=optimizer.param_groups[0]["lr"],
+                    memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0,
+                )
+            )
+        if iteration % checkpoint_period == 0:
+            checkpointer.save("model_{:07d}".format(iteration), **arguments)
+        if iteration == max_iter:
+            checkpointer.save("model_final", **arguments)
+
+    total_training_time = time.time() - start_training_time
+    total_time_str = str(datetime.timedelta(seconds=total_training_time))
+    logger.info(
+        "Total training time: {} ({:.4f} s / it)".format(
+            total_time_str, total_training_time / (max_iter)
+        )
+    )
+
+def train(cfg, local_rank):
+    #model = grcnn.GeneralizedRCNN(cfg)#TODO: change this
+    model = pcnn.PretrainCNN(cfg)
+
+
     device = torch.device(cfg.MODEL.DEVICE)
     model.to(device)
 
@@ -45,13 +146,6 @@ def train(cfg, local_rank, distributed):
     use_mixed_precision = cfg.DTYPE == "float16"
     amp_opt_level = 'O1' if use_mixed_precision else 'O0'
     model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
-
-    if distributed:
-        model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[local_rank], output_device=local_rank,
-            # this should be removed if we update BatchNorm stats
-            broadcast_buffers=False,
-        )
 
     arguments = {}
     arguments["iteration"] = 0
@@ -65,12 +159,7 @@ def train(cfg, local_rank, distributed):
     extra_checkpoint_data = checkpointer.load(cfg.MODEL.WEIGHT)
     arguments.update(extra_checkpoint_data)
 
-    data_loader = make_data_loader(
-        cfg,
-        is_train=True,
-        is_distributed=distributed,
-        start_iter=arguments["iteration"],
-    )
+    data_loader = putils.DEEPSZ(which='train')
 
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
@@ -88,15 +177,20 @@ def train(cfg, local_rank, distributed):
     return model
 
 
-def run_test(cfg, model, distributed):
-    if distributed:
-        model = model.module
+def run_test(cfg, model):
     torch.cuda.empty_cache()  # TODO check if it helps
+    data_loader = putils.DEEPSZ(which='valid')
+    output_folder = os.path.join(CACHE_PATH, "")
+    if not os.path.isdir(output_folder): os.makedirs(output_folder)
+
+    """
     iou_types = ("bbox",)
     if cfg.MODEL.MASK_ON:
         iou_types = iou_types + ("segm",)
     if cfg.MODEL.KEYPOINT_ON:
         iou_types = iou_types + ("keypoints",)
+    
+    
     output_folders = [None] * len(cfg.DATASETS.TEST)
     dataset_names = cfg.DATASETS.TEST
     if cfg.OUTPUT_DIR:
@@ -104,7 +198,9 @@ def run_test(cfg, model, distributed):
             output_folder = os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name)
             mkdir(output_folder)
             output_folders[idx] = output_folder
-    data_loaders_val = make_data_loader(cfg, is_train=False, is_distributed=distributed)
+    #data_loaders_val = make_data_loader(cfg, is_train=False, is_distributed=False)
+    
+    
     for output_folder, dataset_name, data_loader_val in zip(output_folders, dataset_names, data_loaders_val):
         inference(
             model,
@@ -118,6 +214,7 @@ def run_test(cfg, model, distributed):
             output_folder=output_folder,
         )
         synchronize()
+    """
 
 
 def main():
@@ -146,14 +243,7 @@ def main():
     args = parser.parse_args()
 
     num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
-    args.distributed = num_gpus > 1
-
-    if args.distributed:
-        torch.cuda.set_device(args.local_rank)
-        torch.distributed.init_process_group(
-            backend="nccl", init_method="env://"
-        )
-        synchronize()
+    args.distributed = False
 
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
@@ -181,10 +271,10 @@ def main():
     # save overloaded model config in the output directory
     save_config(cfg, output_config_path)
 
-    model = train(cfg, args.local_rank, args.distributed)
+    model = train(cfg, args.local_rank)
 
     if not args.skip_test:
-        run_test(cfg, model, args.distributed)
+        run_test(cfg, model)
 
 
 if __name__ == "__main__":
