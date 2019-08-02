@@ -10,9 +10,9 @@ MODEL:
     FREEZE_CONV_BODY_AT: -1
 
 SOLVER:
-  BASE_LR: 0.005
+  BASE_LR: 0.004
   WEIGHT_DECAY: 0.002
-  STEPS: (100, 250)
+  STEPS: (1000, 2500)
   MAX_ITER: 30000
   #WARMUP_METHOD: 'warmup_reset_per_epoch'
   #WARMUP_METHOD: 'linear'

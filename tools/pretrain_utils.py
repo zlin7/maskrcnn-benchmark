@@ -5,7 +5,7 @@ import pandas as pd
 import os
 
 class ProgressBar:
-    def __init__(self, iterable, taskname=None, barLength=40, stride = 500):
+    def __init__(self, iterable, taskname=None, barLength=40, stride = 50):
         self.l = iterable
         try:
             self.n = len(self.l)
@@ -69,7 +69,8 @@ class DEEPSZ(object):
         self._thres_str = "z{:.2f}_mvir{:.0e}".format(self.min_redshift, self.min_mvir)
         self.map_dir = os.path.join(self.data_path, "maps", "reso{:.2f}{}".format(self.resolution, "_small"))
 
-        label_path_fulll = os.path.join(self.map_dir, "%s_label_full.pkl" % self._thres_str)
+        #label_path_fulll = os.path.join(self.map_dir, "%s_label_full.pkl" % self._thres_str)
+        label_path_fulll = os.path.join(self.map_dir, "%s_label (ratio20).pkl" % self._thres_str)
         #label_path = os.path.join(self.map_dir, "%s_label.pkl" % self._thres_str)
 
         self.map_component_dir = os.path.join(self.map_dir, "%s" % (component))
@@ -102,7 +103,8 @@ class DEEPSZ(object):
         return self.n_batch
 
     def __getitem__(self, i):
-        if i >= self.n_batch: raise IndexError("End")
+        #if i >= self.n_batch: raise IndexError("End")
+        if i >= self.n_batch: i = i % self.n_batch
         curr_batch = []
         labels = np.zeros([self.batch_size, 2])
         for j in range(self.batch_size):
@@ -146,3 +148,24 @@ def get_F1(y_pred, y, xlim=None, ratio=None):
     x = np.linspace(xlim[0], xlim[1])
     y = np.asarray([Fscore(xx) for xx in x])
     return x[np.argmax(y)], np.max(y)
+
+import glob
+def find_best_results(mode='test',
+                      dir_path = '/media/zhen/Research/deepsz_pytorch/%s/results/',
+                      dir_name = 'ratio1-20_convbody=R-50-C4_lr=0.005_wd=0.002_steps=100-250'):
+    dir_path = dir_path%dir_name
+    fs = sorted(glob.glob(os.path.join(dir_path,'epoch*.pkl')), key=lambda x: int(x.replace(".pkl","").split("epoch")[1]))
+    df = pd.DataFrame(columns=['acc','loss', 'F1', "F1_thres"])
+    for f in fs:
+        res = pd.read_pickle(f)
+        if len(res[mode]) == 0: continue
+        epoch = int(os.path.basename(f).replace(".pkl","").split("epoch")[1])
+        df.loc[epoch, 'acc'] =res[mode]['acc'] if mode == 'test' else res[mode]['acc'][max(res[mode]['acc'].keys())]
+        df.loc[epoch, 'loss'] = res[mode]['loss'] if mode == 'test' else res[mode]['loss'][max(res[mode]['loss'].keys())]
+        if mode =='test':
+            df.loc[epoch, 'F1_thres'],df.loc[epoch, 'F1'] = get_F1(res[mode]['y_pred'], res[mode]['y'])
+        else:
+            df.loc[epoch, 'F1'] = res[mode]['F1'] if mode == 'test' else res[mode]['F1'][
+                max(res[mode]['F1'].keys())]
+    return df
+
