@@ -69,8 +69,8 @@ class DEEPSZ(object):
         self._thres_str = "z{:.2f}_mvir{:.0e}".format(self.min_redshift, self.min_mvir)
         self.map_dir = os.path.join(self.data_path, "maps", "reso{:.2f}{}".format(self.resolution, "_small"))
 
-        #label_path_fulll = os.path.join(self.map_dir, "%s_label_full.pkl" % self._thres_str)
-        label_path_fulll = os.path.join(self.map_dir, "%s_label (ratio20).pkl" % self._thres_str)
+        label_path_fulll = os.path.join(self.map_dir, "%s_label_full.pkl" % self._thres_str)
+        #label_path_fulll = os.path.join(self.map_dir, "%s_label (ratio20).pkl" % self._thres_str)
         #label_path = os.path.join(self.map_dir, "%s_label.pkl" % self._thres_str)
 
         self.map_component_dir = os.path.join(self.map_dir, "%s" % (component))

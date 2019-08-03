@@ -190,6 +190,127 @@ def do_train(
         )
     )
 
+def do_train2(
+        args,
+        model,
+        optimizer,
+        scheduler,
+        checkpointer,
+        device,
+        checkpoint_period,
+        arguments,
+        eval_step=100,
+):
+    logger = logging.getLogger("maskrcnn_benchmark.trainer")
+    logger.info("Start training")
+    meters = MetricLogger(delimiter="  ")
+    start_iter = arguments["iteration"]
+    curr_iter, curr_base = start_iter, 0
+    start_training_time = time.time()
+    end = time.time()
+    val_hist = {"loss":{}, "acc":{}, "F1":{}}
+
+    best_val_F1, best_val_iter, best_val_loss = None, None, None
+
+    train_hist = {'loss':{}, "acc":{}}
+    data_loader = putils.DEEPSZ(which='train', ratio=None)
+    full_ratio = len(data_loader.labels) / float(data_loader.labels.y.sum())
+    for epoch in range(args.num_epochs):
+        optimizer.state = collections.defaultdict(dict)
+        curr_ratio = min(epoch + 1, args.ratio_up_to)
+        loss_class_weight = torch.tensor([1., full_ratio / curr_ratio]).to(device)
+        stop = False
+        arguments["epoch"] = epoch
+        curr_i = 0
+        while not stop:
+            images, targets, _ = data_loader[curr_i]
+            model.train()
+            if any(len(target) < 1 for target in targets):
+                logger.error(
+                    f"Iteration={curr_iter + 1} || Image Ids used for training {_} || targets Length={[len(target) for target in targets]}")
+                continue
+            data_time = time.time() - end
+
+            curr_iter = curr_i + curr_base + 1
+            arguments["iteration"] = curr_iter
+            arguments["curr_iter_this_epoch"] = curr_i
+
+            loss_dict, softmax = model.forward(images.to(device), targets.to(device), weight=loss_class_weight)
+            train_hist['loss'][curr_iter] = float(loss_dict['loss_classifier'].cpu().detach())
+            _y = targets[:,1].detach().numpy().astype(int)
+            _yhat = (softmax[:,1].cpu().detach().numpy() > 0.5).astype(int)
+            train_hist['acc'][curr_iter] = (_yhat == _y).astype(float).mean()
+
+            losses = sum(loss for loss in loss_dict.values())
+
+            # reduce losses over all GPUs for logging purposes
+            meters.update(loss=losses, **loss_dict)
+
+            optimizer.zero_grad()
+            # Note: If mixed precision is not used, this ends up doing nothing
+            # Otherwise apply loss scaling for mixed-precision recipe
+            with amp.scale_loss(losses, optimizer) as scaled_losses:
+                scaled_losses.backward()
+            optimizer.step()
+
+            batch_time = time.time() - end
+            end = time.time()
+            meters.update(time=batch_time, data=data_time)
+
+            if curr_iter % 20 == 0:
+                #ipdb.set_trace()
+                logger.info(
+                    meters.delimiter.join(
+                        [
+                            "ratio: {ratio}",
+                            "iter: {iter}",
+                            "{meters}",
+                            "lr: {lr:.6f}",
+                            "max mem: {memory:.0f}",
+                        ]
+                    ).format(
+                        ratio=curr_ratio,
+                        iter=curr_iter,
+                        meters=str(meters),
+                        lr=optimizer.param_groups[0]["lr"],
+                        memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0,
+                    )
+                )
+
+                if scheduler is not None:
+                    scheduler.step(curr_i)
+                    # scheduler.step_wrap(curr_iter)
+                    # scheduler.step_iter(arguments["epoch"], arguments["curr_iter_this_epoch"])
+
+                if curr_iter % eval_step == 0:
+                    val_ret = run_test(model, cfg, args, which='valid', ratio=curr_ratio, weight=loss_class_weight)
+                    _thres, val_ret['F1'] = putils.get_F1(val_ret['y_pred'], val_ret['y'], ratio=full_ratio/curr_ratio)
+                    for k in ['loss','acc','F1']: val_hist[k][curr_iter] = val_ret[k]
+                    print(val_ret)
+                    if best_val_loss is None or val_ret['loss'] < best_val_loss:
+                    #if best_val_F1 is None or val_ret['F1'] > best_val_F1:
+                        #best_val_F1, best_val_iter = val_ret['F1'], curr_iter
+                        best_val_loss, best_val_iter = val_ret['loss'], curr_iter
+                        #if val_ret['F1'] > 0.5 and curr_ratio > 1: checkpointer.save("model_best-%d"%epoch, **arguments)
+                        checkpointer.save("model_best-%d"%epoch, **arguments)
+
+                    if val_ret['loss'] > 2.0 * best_val_loss or (curr_iter - best_val_iter) > eval_step * 10:
+                        stop = True
+            if curr_iter % checkpoint_period == 0:
+                checkpointer.save("model_{:d}-{:07d}".format(epoch, curr_iter), **arguments)
+            #scheduler.step_iter(arguments["epoch"], arguments["curr_iter_this_epoch"])
+            curr_i = curr_i + 1
+        if os.path.isfile(os.path.join(checkpointer.save_dir, "model_best-%d.pth"%epoch)):
+            arguments = checkpointer.load(os.path.join(checkpointer.save_dir, "model_best-%d.pth"%epoch))
+
+        ret = run_test(model, cfg, args, which='test', ratio=None)
+        ret = {"test": ret, "val":val_hist, "train":train_hist}
+        to_pickle(ret, os.path.join(cfg.OUTPUT_DIR, "results", "epoch%d.pkl"%epoch))
+    checkpointer.save("model_final", **arguments)
+
+    total_training_time = time.time() - start_training_time
+    total_time_str = str(datetime.timedelta(seconds=total_training_time))
+
 def to_pickle(d, path):
     if not os.path.isdir(os.path.dirname(path)):
         os.makedirs(os.path.dirname(path))
@@ -228,7 +349,7 @@ def train(cfg, args):
 
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
-    do_train(
+    do_train2(
         args,
         model,
         optimizer,
@@ -237,13 +358,13 @@ def train(cfg, args):
         device,
         checkpoint_period,
         arguments,
-        oversample_pos=args.oversample_pos
+        #oversample_pos=args.oversample_pos
     )
 
     return model
 
 
-def run_test(model, cfg, args, **kwargs):
+def run_test(model, cfg, args, weight=None, **kwargs):
 
     device = torch.device(cfg.MODEL.DEVICE)
 
@@ -257,12 +378,10 @@ def run_test(model, cfg, args, **kwargs):
     losses = []
     for iteration in putils.ProgressBar(range(len(data_loader)),taskname="test"):
         images,targets, _ = data_loader[iteration]
-        images = images.to(device)
-        targets = targets.to(device)
-        loss_dict, softmax = model(images, targets)
+        loss_dict, softmax = model.forward(images.to(device), targets.to(device), weight=weight)
         losses.append(float(loss_dict['loss_classifier'].cpu().detach()))
         y_preds.append(softmax[:,1].cpu().detach().numpy())
-        ys.append(targets[:, 1].cpu().detach().numpy())
+        ys.append(targets[:, 1].detach().numpy())
 
     ret = {"y_pred":np.concatenate(y_preds),
            "y":np.concatenate(ys).astype(int),
