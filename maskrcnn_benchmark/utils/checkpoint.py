@@ -118,7 +118,6 @@ class DetectronCheckpointer(Checkpointer):
 
     def _load_file(self, f):
         # catalog lookup
-        ipdb.set_trace()
         if f.startswith("catalog://"):
             paths_catalog = import_file(
                 "maskrcnn_benchmark.config.paths_catalog", self.cfg.PATHS_CATALOG, True

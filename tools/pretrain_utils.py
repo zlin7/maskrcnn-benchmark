@@ -80,7 +80,11 @@ class DEEPSZ(object):
         if ratio is not None:
             pos_idx = labels_full[labels_full['y']].index
             neg_idx = labels_full.index.difference(pos_idx)
-            if oversample_pos:
+            if isinstance(oversample_pos, float):
+                pos_idx = np.random.choice(pos_idx, int(oversample_pos * len(pos_idx)))
+                self.labels = pd.concat([labels_full.loc[pos_idx],
+                                         labels_full.loc[neg_idx[:int(self.ratio * len(pos_idx))]]])
+            elif oversample_pos:
                 pos_idx = np.random.choice(pos_idx, int(np.round(len(neg_idx) / float(ratio))))
                 self.labels = pd.concat([labels_full.loc[pos_idx],
                                          labels_full.loc[neg_idx]])
@@ -150,9 +154,10 @@ def get_F1(y_pred, y, xlim=None, ratio=None):
     return x[np.argmax(y)], np.max(y)
 
 import glob
+import ipdb
 def find_best_results(mode='test',
                       dir_path = '/media/zhen/Research/deepsz_pytorch/%s/results/',
-                      dir_name = 'ratio1-20_convbody=R-50-C4_lr=0.005_wd=0.002_steps=100-250'):
+                      dir_name = 'nooversample_ratio1-20_convbody=R-50-C4_lr=0.005_wd=0.002_steps=1000-2500'):
     dir_path = dir_path%dir_name
     fs = sorted(glob.glob(os.path.join(dir_path,'epoch*.pkl')), key=lambda x: int(x.replace(".pkl","").split("epoch")[1]))
     df = pd.DataFrame(columns=['acc','loss', 'F1', "F1_thres"])
@@ -165,7 +170,7 @@ def find_best_results(mode='test',
         if mode =='test':
             df.loc[epoch, 'F1_thres'],df.loc[epoch, 'F1'] = get_F1(res[mode]['y_pred'], res[mode]['y'])
         else:
-            df.loc[epoch, 'F1'] = res[mode]['F1'] if mode == 'test' else res[mode]['F1'][
-                max(res[mode]['F1'].keys())]
+            ipdb.set_trace()
+            df.loc[epoch, 'F1'] = res[mode]['F1'][max(res[mode]['F1'].keys())]
     return df
 

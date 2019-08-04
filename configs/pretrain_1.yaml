@@ -12,7 +12,7 @@ MODEL:
 SOLVER:
   BASE_LR: 0.005
   WEIGHT_DECAY: 0.002
-  STEPS: (100, 250)
+  STEPS: (1000, 4000)
   MAX_ITER: 30000
   #WARMUP_METHOD: 'warmup_reset_per_epoch'
   #WARMUP_METHOD: 'linear'

@@ -39,7 +39,7 @@ class PretrainCNN(nn.Module):
         self.fc1 = nn.Linear(256, 256)
         self.fc2 = nn.Linear(256, 2)
 
-    def forward(self, images, targets=None):
+    def forward(self, images, targets=None, weight=None):
         """
         Arguments:
             images (list[Tensor] or ImageList): images to be processed
@@ -65,7 +65,10 @@ class PretrainCNN(nn.Module):
 
         softmax = F.softmax(pred, dim=1)
         #ipdb.set_trace()
-        loss = F.binary_cross_entropy(softmax, targets)
+        if weight is not None:
+            loss = F.binary_cross_entropy(softmax, targets, weight=weight)
+        else:
+            loss = F.binary_cross_entropy(softmax, targets)
         return {"loss_classifier": loss}, softmax
         if self.training:
             loss = F.binary_cross_entropy(softmax, targets)

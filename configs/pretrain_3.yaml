@@ -10,9 +10,11 @@ MODEL:
     FREEZE_CONV_BODY_AT: -1
 
 SOLVER:
+  BASE_LR: 0.005
+  WEIGHT_DECAY: 0.002
   STEPS: (1000, 10000)
   MAX_ITER: 30000
   #WARMUP_METHOD: 'warmup_reset_per_epoch'
-  #WARMUP_METHOD: 'linear'
+  WARMUP_METHOD: 'ADAM-linear'
   #WARMUP_ITERS: 400
 OUTPUT_DIR: "/media/zhen/Research/deepsz_pytorch/"
