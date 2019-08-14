@@ -42,7 +42,7 @@ class ProgressBar:
             self.cur += 1
             return self.l[self.cur - 1]
 
-DATA_PATH = "/media/zhen/Data/deepsz/"
+DATA_PATH = "/media/zhen/Research/deepsz/"
 
 #======================================================================================================================
 
@@ -73,7 +73,7 @@ class DEEPSZ(object):
         #label_path_fulll = os.path.join(self.map_dir, "%s_label (ratio20).pkl" % self._thres_str)
         #label_path = os.path.join(self.map_dir, "%s_label.pkl" % self._thres_str)
 
-        self.map_component_dir = os.path.join(self.map_dir, "%s" % (component))
+        self.map_component_dir = os.path.join(self.map_dir, "%s(with noise)" % (component))
 
         labels_full = pd.read_pickle(label_path_fulll)
         labels_full = labels_full[labels_full['which'] == which]

@@ -41,7 +41,7 @@ from maskrcnn_benchmark.utils.metric_logger import MetricLogger
 #import maskrcnn_benchmark.modeling.detector.generalized_rcnn as grcnn
 import maskrcnn_benchmark.modeling.detector.pertrain_cnn as pcnn
 
-CACHE_PATH = "/media/zhen/Research/deepsz_pytorch/"
+CACHE_PATH = "/media/zhen/Research/deepsz_pytorch_2/"
 
 import tools.pretrain_utils as putils
 
@@ -78,10 +78,10 @@ def do_train(
         curr_ratio = (epoch // args.change_ratio_after) + 1
         curr_ratio = min(curr_ratio, args.ratio_up_to)
         if oversample_pos:
-            data_loader = putils.DEEPSZ(which='train', ratio=curr_ratio, oversample_pos=True)
+            data_loader = putils.DEEPSZ(which='train', ratio=curr_ratio, oversample_pos=True, component=args.comp)
             max_iter_curr_epoch = int(np.round(len(data_loader) / (1+curr_ratio) * (55 / 54.)  *  (1.+curr_ratio/args.ratio_up_to)))
         else:
-            data_loader = putils.DEEPSZ(which='train', ratio=curr_ratio, oversample_pos=False)
+            data_loader = putils.DEEPSZ(which='train', ratio=curr_ratio, oversample_pos=False, component=args.comp)
             max_iter_curr_epoch = int(np.round(len(data_loader)))
         if max_iter_curr_epoch < curr_iter - curr_base:
             curr_base += max_iter_curr_epoch
@@ -157,7 +157,7 @@ def do_train(
                     # scheduler.step_iter(arguments["epoch"], arguments["curr_iter_this_epoch"])
 
                 if curr_iter % 200 == 0:
-                    val_ret = run_test(model, cfg, args, which='valid', ratio=curr_ratio)
+                    val_ret = run_test(model, cfg, args, which='valid', ratio=curr_ratio, component=args.comp)
                     _thres, val_ret['F1'] = putils.get_F1(val_ret['y_pred'], val_ret['y'], ratio=55./curr_ratio)
                     for k in ['loss','acc','F1']: val_hist[k][curr_iter] = val_ret[k]
                     print(val_ret)
@@ -172,8 +172,8 @@ def do_train(
             #scheduler.step_iter(arguments["epoch"], arguments["curr_iter_this_epoch"])
         if os.path.isfile(os.path.join(checkpointer.save_dir, "model_best-%d.pth"%epoch)):
             arguments = checkpointer.load(os.path.join(checkpointer.save_dir, "model_best-%d.pth"%epoch))
-        ret = run_test(model, cfg, args, which='test', ratio=None)
-        val_ret = run_test(model, cfg, args, which='valid', ratio=None)
+        ret = run_test(model, cfg, args, which='test', ratio=None, component=args.comp)
+        val_ret = run_test(model, cfg, args, which='valid', ratio=None, component=args.comp)
         ret = {"test": ret, "val":val_hist, "train":train_hist, 'val_ret':val_ret}
         curr_base += max_iter_curr_epoch
 
@@ -211,14 +211,14 @@ def do_train2(
     val_hist = {"loss":{}, "acc":{}, "F1":{}}
 
     train_hist = {'loss':{}, "acc":{}}
-    data_loader = putils.DEEPSZ(which='train', ratio=None)
+    data_loader = putils.DEEPSZ(which='train', ratio=None, component=args.comp)
     full_ratio = len(data_loader.labels) / float(data_loader.labels.y.sum())
     for epoch in range(args.num_epochs):
         best_val_F1, best_val_iter, best_val_loss = None, None, None
         optimizer.state = collections.defaultdict(dict)
         curr_ratio = min(epoch + 1, args.ratio_up_to)
         #loss_class_weight = torch.tensor([1., full_ratio / curr_ratio]).to(device)
-        data_loader = putils.DEEPSZ(which='train', ratio=curr_ratio, oversample_pos=oversample_pos)
+        data_loader = putils.DEEPSZ(which='train', ratio=curr_ratio, oversample_pos=oversample_pos,component=args.comp)
         print("%d training batchs...."%len(data_loader))
         stop = False
         arguments["epoch"] = epoch
@@ -284,7 +284,7 @@ def do_train2(
                     # scheduler.step_iter(arguments["epoch"], arguments["curr_iter_this_epoch"])
 
                 if curr_iter % eval_step == 0:
-                    val_ret = run_test(model, cfg, args, which='valid', ratio=curr_ratio, weight=None)
+                    val_ret = run_test(model, cfg, args, which='valid', ratio=curr_ratio, weight=None,component=args.comp)
                     _thres, val_ret['F1'] = putils.get_F1(val_ret['y_pred'], val_ret['y'], ratio=full_ratio/curr_ratio)
                     for k in ['loss','acc','F1']: val_hist[k][curr_iter] = val_ret[k]
                     print(val_ret)
@@ -296,7 +296,7 @@ def do_train2(
                         checkpointer.save("model_best-%d"%epoch, **arguments)
 
                     if (curr_iter - best_val_iter) > eval_step * 10:
-                        stop = val_ret['acc'] > 0.9 and curr_i > 1000
+                        stop = (val_ret['acc'] > 0.9 or val_ret['F1'] > 0.5) and curr_i > 1000
             if curr_iter % checkpoint_period == 0:
                 checkpointer.save("model_{:d}-{:07d}".format(epoch, curr_iter), **arguments)
             #scheduler.step_iter(arguments["epoch"], arguments["curr_iter_this_epoch"])
@@ -304,8 +304,8 @@ def do_train2(
         if os.path.isfile(os.path.join(checkpointer.save_dir, "model_best-%d.pth"%epoch)):
             arguments = checkpointer.load(os.path.join(checkpointer.save_dir, "model_best-%d.pth"%epoch))
 
-        ret = run_test(model, cfg, args, which='test', ratio=None)
-        val_ret = run_test(model, cfg, args, which='valid', ratio=None)
+        ret = run_test(model, cfg, args, which='test', ratio=None,component=args.comp)
+        val_ret = run_test(model, cfg, args, which='valid', ratio=None,component=args.comp)
         ret = {"test": ret, "val":val_hist, "train":train_hist, 'val_ret':val_ret}
         to_pickle(ret, os.path.join(cfg.OUTPUT_DIR, "results", "epoch%d.pkl"%epoch))
     checkpointer.save("model_final", **arguments)
@@ -434,6 +434,13 @@ def main():
         type=int,
     )
 
+    parser.add_argument(
+        "--comp",
+        help="",
+        default='skymap',
+        choices=['skymap', 'samples'],
+        type=str,
+    )
 
     parser.add_argument("--oversample_pos", action='store_true')
 
@@ -458,14 +465,15 @@ def main():
     except:
         cfg['SOLVER']['METHOD'] = 'ADAM'
     ipdb.set_trace()
-    output_path = os.path.join(CACHE_PATH, "ratio{}-{}_convbody={}_{}_lr={}_wd={}_steps={}-{}".format(args.change_ratio_after,
+    output_path = os.path.join(CACHE_PATH, "ratio{}-{}_convbody={}_{}_lr={}_wd={}_steps={}-{}_comp={}".format(args.change_ratio_after,
                                                                                                    args.ratio_up_to,
                                                                                                    cfg['MODEL']['BACKBONE']['CONV_BODY'],
                                                                                                       cfg['SOLVER']['METHOD'],
                                                                                                    cfg['SOLVER']['BASE_LR'],
                                                                                                    cfg['SOLVER']['WEIGHT_DECAY'],
                                                                                                    cfg['SOLVER']['STEPS'][0],
-                                                                                                   cfg['SOLVER']['STEPS'][1]))
+                                                                                                   cfg['SOLVER']['STEPS'][1],
+                                                                                                              args.comp))
     if not args.oversample_pos:
         output_path = os.path.join(os.path.dirname(output_path), 'nooversample_%s'%os.path.basename(output_path))
         #ipdb.set_trace()
@@ -496,8 +504,8 @@ def main():
 
     model = train(cfg, args)
 
-    if not args.skip_test:
-        run_test(model, cfg, args)
+    #if not args.skip_test:
+    #    run_test(model, cfg, args)
 
 
 if __name__ == "__main__":
