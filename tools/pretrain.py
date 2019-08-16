@@ -41,7 +41,7 @@ from maskrcnn_benchmark.utils.metric_logger import MetricLogger
 #import maskrcnn_benchmark.modeling.detector.generalized_rcnn as grcnn
 import maskrcnn_benchmark.modeling.detector.pertrain_cnn as pcnn
 
-CACHE_PATH = "/media/zhen/Research/deepsz_pytorch_2/"
+#CACHE_PATH = "/media/zhen/Research/deepsz_pytorch_2/"
 
 import tools.pretrain_utils as putils
 
@@ -351,6 +351,9 @@ def train(cfg, args):
 
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
+    if args.eval_only:
+        return eval(cfg, args, model, checkpointer)
+
     do_train2(
         args,
         model,
@@ -366,14 +369,14 @@ def train(cfg, args):
     return model
 
 
-def run_test(model, cfg, args, weight=None, **kwargs):
+def run_test(model, cfg, args, weight=None, data_loader=None, **kwargs):
 
     device = torch.device(cfg.MODEL.DEVICE)
 
     torch.cuda.empty_cache()  # TODO check if it helps
-    data_loader = putils.DEEPSZ(**kwargs)
+    if data_loader is None: data_loader = putils.DEEPSZ(**kwargs)
     model.eval()
-    output_folder = os.path.join(CACHE_PATH, "")
+    output_folder = os.path.join(cfg.OUTPUT_DIR, "")
     if not os.path.isdir(output_folder): os.makedirs(output_folder)
 
     y_preds, ys = [], []
@@ -392,8 +395,46 @@ def run_test(model, cfg, args, weight=None, **kwargs):
     ret['acc'] = ((ret['y_pred'] > 0.5).astype(int) == ret['y']).astype(float).mean()
     return ret
 
+class DEEPSZ_eval(object):
+    def __init__(self, path = '/media/zhen/Data/Research/deepsz/deepszmaster/deepsz/data/maps/split2'):
+        self.data_path = path
+        self.map_component_dir = os.path.join(self.data_path, 'components', 'skymap(with noise)')
+        self.batch_size = 128
+        self.labels = pd.read_pickle(os.path.join(self.data_path, 'labels.pkl'))
+        self.n = len(self.labels)
+        self.n_batch = int(np.ceil(self.n / float(self.batch_size)))
+        self.normalize = True
+
+    def __len__(self):
+        return self.n_batch
+
+    def __getitem__(self, i):
+        if i >= self.n_batch: i = i % self.n_batch
+        curr_batch = []
+        labels = np.zeros([self.batch_size, 2])
+        for j in range(self.batch_size):
+            iloc_j = (j + self.batch_size * i)%self.n
+            idx = self.labels.index[iloc_j]
+            curr_img = np.load(os.path.join(self.map_component_dir, "%d.npy"%idx))
+            if self.normalize:
+                _min, _max = curr_img.min(), curr_img.max()
+                curr_img = (curr_img - _min) / (_max - _min)
+            curr_batch.append(curr_img)
+            labels[j, 1 if self.labels.iloc[iloc_j]['y'] else 0] = 1
+        imgs = np.stack(curr_batch, axis=0).astype(np.float32).swapaxes(3,2).swapaxes(2,1)
+        return torch.tensor(imgs), torch.tensor(labels), i
 
 
+def eval(cfg, args, model, checkpointer):
+    arguments = checkpointer.load(os.path.join(checkpointer.save_dir,
+                                               "model_best-%d.pth" % args.eval_epoch))
+    split_id = 2 if "pytorch_2" in cfg.OUTPUT_DIR else 1
+    output_dir = "/media/zhen/Data/Research/deepsz/deepszmaster/deepsz/data/maps/split%d"%split_id
+    ipdb.set_trace()
+    dataloader = DEEPSZ_eval(path=output_dir)
+    ret = run_test(model, cfg, None, data_loader=dataloader)
+    dataloader.labels['y_pred'] = ret['y_pred'][:len(dataloader.labels)]
+    return dataloader.labels
 
 def main():
     parser = argparse.ArgumentParser(description="PyTorch Object Detection Training")
@@ -444,13 +485,17 @@ def main():
 
     parser.add_argument("--oversample_pos", action='store_true')
 
+    parser.add_argument("--eval_only", action='store_true')
+    parser.add_argument("--eval_epoch", default=16, type=int)
+    #parser.add_argument("--eval_split", default=2, type=int, choices={1,2})
+
+
     parser.add_argument(
         "opts",
         help="Modify config options using the command-line",
         default=None,
         nargs=argparse.REMAINDER,
     )
-
 
     args = parser.parse_args()
 
@@ -465,7 +510,7 @@ def main():
     except:
         cfg['SOLVER']['METHOD'] = 'ADAM'
     ipdb.set_trace()
-    output_path = os.path.join(CACHE_PATH, "ratio{}-{}_convbody={}_{}_lr={}_wd={}_steps={}-{}_comp={}".format(args.change_ratio_after,
+    output_path = os.path.join(cfg['OUTPUT_DIR'], "ratio{}-{}_convbody={}_{}_lr={}_wd={}_steps={}-{}_comp={}".format(args.change_ratio_after,
                                                                                                    args.ratio_up_to,
                                                                                                    cfg['MODEL']['BACKBONE']['CONV_BODY'],
                                                                                                       cfg['SOLVER']['METHOD'],
@@ -502,7 +547,7 @@ def main():
     # save overloaded model config in the output directory
     save_config(cfg, output_config_path)
 
-    model = train(cfg, args)
+    return train(cfg, args)
 
     #if not args.skip_test:
     #    run_test(model, cfg, args)
@@ -510,4 +555,4 @@ def main():
 
 if __name__ == "__main__":
     torch.manual_seed(7)
-    main()
+    res = main()
