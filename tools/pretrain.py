@@ -396,7 +396,7 @@ def run_test(model, cfg, args, weight=None, data_loader=None, **kwargs):
     return ret
 
 class DEEPSZ_eval(object):
-    def __init__(self, path = '/media/zhen/Data/Research/deepsz/deepszmaster/deepsz/data/maps/split2'):
+    def __init__(self, path = '/media/zhen/Data/Research/deepsz/deepszmaster/deepsz/data/maps/split2_10x'):
         self.data_path = path
         self.map_component_dir = os.path.join(self.data_path, 'components', 'skymap(with noise)')
         self.batch_size = 128
@@ -429,7 +429,8 @@ def eval(cfg, args, model, checkpointer):
     arguments = checkpointer.load(os.path.join(checkpointer.save_dir,
                                                "model_best-%d.pth" % args.eval_epoch))
     split_id = 2 if "pytorch_2" in cfg.OUTPUT_DIR else 1
-    output_dir = "/media/zhen/Data/Research/deepsz/deepszmaster/deepsz/data/maps/split%d"%split_id
+    #output_dir = "/media/zhen/Data/Research/deepsz/deepszmaster/deepsz/data/maps/split%d_10x"%split_id
+    output_dir = "/media/zhen/Research/gitRes/deepsz/data/maps/split%d_10x" % split_id
     ipdb.set_trace()
     dataloader = DEEPSZ_eval(path=output_dir)
     ret = run_test(model, cfg, None, data_loader=dataloader)
@@ -479,7 +480,7 @@ def main():
         "--comp",
         help="",
         default='skymap',
-        choices=['skymap', 'samples'],
+        choices=['skymap', 'samples', 'ksz', 'ir_pts', 'rad_pts', 'dust'],
         type=str,
     )
 
