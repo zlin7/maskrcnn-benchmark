@@ -6,12 +6,14 @@ import os
 
 
 try:
-    sys.path.append(os.path.abspath("../../.."))
-    from global_settings import BASE_CNN_DIR, DATA_PATH, VARYING_DIST_DATA_PATH
-except:
+    sys.path.append(os.path.abspath("../.."))
+    from global_settings import BASE_CNN_DIR, DATA_PATH, VARYING_DIST_DATA_PATH, CACHE_CNNFAILURE
+except Exception as err:
+    print(err)
     BASE_CNN_DIR = '/media/zhen/Data'
     DATA_PATH = "/media/zhen/Research/deepsz/"
     VARYING_DIST_DATA_PATH = '/media/zhen/Research/gitRes/deepsz_clean/deepsz/data/maps/split2_10x'
+    CACHE_CNNFAILURE = '/media/zhen/Research/gitRes/deepsz_clean/deepsz/data/cache/CNNFailures.pkl'
 
 class ProgressBar:
     def __init__(self, iterable, taskname=None, barLength=40, stride = 50):
