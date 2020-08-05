@@ -40,9 +40,6 @@ except ImportError:
 from maskrcnn_benchmark.utils.metric_logger import MetricLogger
 #import maskrcnn_benchmark.modeling.detector.generalized_rcnn as grcnn
 import maskrcnn_benchmark.modeling.detector.pertrain_cnn as pcnn
-
-#CACHE_PATH = "/media/zhen/Research/deepsz_pytorch_2/"
-
 import tools.pretrain_utils as putils
 
 
@@ -201,6 +198,7 @@ def train(cfg, args):
     checkpointer = DetectronCheckpointer(
         cfg, model, optimizer, scheduler, output_dir, save_to_disk
     )
+    #ipdb.set_trace()
     extra_checkpoint_data = checkpointer.load(cfg.MODEL.WEIGHT)
     arguments.update(extra_checkpoint_data)
     #scheduler.last_iter_this_epoch = arguments.get('curr_iter_this_epoch', -1)
@@ -208,7 +206,7 @@ def train(cfg, args):
     #ipdb.set_trace()
 
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
-
+    #ipdb.set_trace()
     if args.eval_only:
         return eval(cfg, args, model, checkpointer)
 
@@ -221,7 +219,7 @@ def train(cfg, args):
         device,
         checkpoint_period,
         arguments,
-        #oversample_pos=args.oversample_pos
+        oversample_pos=args.oversample_pos
     )
 
     return model
@@ -294,11 +292,10 @@ def eval(cfg, args, model, checkpointer):
     """
     arguments = checkpointer.load(os.path.join(checkpointer.save_dir,
                                                "model_best-%d.pth" % args.eval_epoch))
-    split_id = 2 if "pytorch_2" in cfg.OUTPUT_DIR else 1
-    #output_dir = "/media/zhen/Data/Research/deepsz/deepszmaster/deepsz/data/maps/split%d_10x"%split_id
-    output_dir = "/media/zhen/Research/gitRes/deepsz/data/maps/split%d_10x" % split_id
-    dataloader = DEEPSZ_eval(path=output_dir)
+    dataloader = DEEPSZ_eval(path= putils.VARYING_DIST_DATA_PATH)
+    #ipdb.set_trace()
     ret = run_test(model, cfg, None, data_loader=dataloader)
+    #ipdb.set_trace()
     dataloader.labels['y_pred'] = ret['y_pred'][:len(dataloader.labels)]
     return dataloader.labels
 
@@ -353,6 +350,10 @@ def main():
 
     parser.add_argument("--eval_only", action='store_true')
     parser.add_argument("--eval_epoch", default=16, type=int)
+    parser.add_argument('--eval-output-loc',
+                        default=os.path.join(putils.VARYING_DIST_DATA_PATH, "pred.pkl"),
+                        help="where to output the prediction label",
+                        type=str)
     #parser.add_argument("--eval_split", default=2, type=int, choices={1,2})
 
 
@@ -375,7 +376,7 @@ def main():
         cfg['SOLVER']['WARMUP_METHOD'] = cfg['SOLVER']['WARMUP_METHOD'].split("-")[1]
     except:
         cfg['SOLVER']['METHOD'] = 'ADAM'
-    ipdb.set_trace()
+    #ipdb.set_trace()
     output_path = os.path.join(cfg['OUTPUT_DIR'], "ratio{}-{}_convbody={}_{}_lr={}_wd={}_steps={}-{}_comp={}".format(args.change_ratio_after,
                                                                                                    args.ratio_up_to,
                                                                                                    cfg['MODEL']['BACKBONE']['CONV_BODY'],
@@ -391,6 +392,7 @@ def main():
     cfg.freeze()
 
     output_dir = cfg.OUTPUT_DIR
+    #ipdb.set_trace()
     if output_dir:
         mkdir(output_dir)
 
@@ -412,7 +414,11 @@ def main():
     # save overloaded model config in the output directory
     save_config(cfg, output_config_path)
 
-    return train(cfg, args)
+    res = train(cfg, args)
+    if args.eval_only:
+        assert not os.path.isfile(args.eval_output_loc), "Let's not overwrite the old predictions."
+        ipdb.set_trace()
+        pd.to_pickle(res, args.eval_output_loc)
 
     #if not args.skip_test:
     #    run_test(model, cfg, args)

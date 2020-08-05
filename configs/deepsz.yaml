@@ -17,4 +17,4 @@ SOLVER:
   #WARMUP_METHOD: 'warmup_reset_per_epoch'
   WARMUP_METHOD: 'SGD-linear'
   #WARMUP_ITERS: 400
-OUTPUT_DIR: "/../deepsz/"
+OUTPUT_DIR: "../deepsz/"
