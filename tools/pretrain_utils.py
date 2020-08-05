@@ -7,8 +7,9 @@ import os
 
 try:
     sys.path.append(os.path.abspath("../.."))
-    from global_settings import BASE_CNN_DIR, DATA_PATH, VARYING_DIST_DATA_PATH, CACHE_CNNFAILURE
+    from global_settings import BASE_CNN_DIR, DATA_PATH, VARYING_DIST_DATA_PATH, CACHE_CNNFAILURE, FULL_DATA_PATH, FULL_DATA_LABEL_PATH
 except Exception as err:
+    raise err
     print(err)
     BASE_CNN_DIR = '/media/zhen/Data'
     DATA_PATH = "/media/zhen/Research/deepsz/"
@@ -79,9 +80,9 @@ class DEEPSZ(object):
         self._thres_str = "z{:.2f}_mvir{:.0e}".format(self.min_redshift, self.min_mvir)
         self.map_dir = os.path.join(self.data_path, "maps", "reso{:.2f}{}".format(self.resolution, "_small"))
 
-        label_path_fulll = os.path.join(self.map_dir, "%s_label_full.pkl" % self._thres_str)
-        #label_path_fulll = os.path.join(self.map_dir, "%s_label (ratio20).pkl" % self._thres_str)
-        #label_path = os.path.join(self.map_dir, "%s_label.pkl" % self._thres_str)
+        label_path_fulll = os.path.join(self.map_dir, "%s_label.pkl" % self._thres_str)
+        assert os.path.normpath(self.map_dir) == os.path.normpath(FULL_DATA_PATH)
+        assert os.path.normpath(label_path_fulll) == os.path.normpath(FULL_DATA_LABEL_PATH)
 
         self.map_component_dir = os.path.join(self.map_dir, "%s(with noise)" % (component))
 
