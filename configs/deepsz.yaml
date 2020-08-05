@@ -17,4 +17,4 @@ SOLVER:
   #WARMUP_METHOD: 'warmup_reset_per_epoch'
   WARMUP_METHOD: 'SGD-linear'
   #WARMUP_ITERS: 400
-OUTPUT_DIR: "/media/zhen/Research/deepsz_pytorch/"
+OUTPUT_DIR: "/../deepsz/"

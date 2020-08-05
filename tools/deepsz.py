@@ -56,148 +56,6 @@ def do_train(
         device,
         checkpoint_period,
         arguments,
-        oversample_pos=True
-):
-    logger = logging.getLogger("maskrcnn_benchmark.trainer")
-    logger.info("Start training")
-    meters = MetricLogger(delimiter="  ")
-    start_iter = arguments["iteration"]
-    curr_iter, curr_base = start_iter, 0
-    start_training_time = time.time()
-    end = time.time()
-    val_hist = {"loss":{}, "acc":{}, "F1":{}}
-
-    best_val_F1, best_val_iter, best_val_loss = None, None, None
-
-    train_hist = {'loss':{}, "acc":{}}
-    curr_ratio = None
-    for epoch in range(args.num_epochs):
-        #if curr_ratio is not None and curr_ratio == (epoch // args.change_ratio_after):
-        #    optimizer.state = collections.defaultdict(dict)
-
-        curr_ratio = (epoch // args.change_ratio_after) + 1
-        curr_ratio = min(curr_ratio, args.ratio_up_to)
-        if oversample_pos:
-            data_loader = putils.DEEPSZ(which='train', ratio=curr_ratio, oversample_pos=True, component=args.comp)
-            max_iter_curr_epoch = int(np.round(len(data_loader) / (1+curr_ratio) * (55 / 54.)  *  (1.+curr_ratio/args.ratio_up_to)))
-        else:
-            data_loader = putils.DEEPSZ(which='train', ratio=curr_ratio, oversample_pos=False, component=args.comp)
-            max_iter_curr_epoch = int(np.round(len(data_loader)))
-        if max_iter_curr_epoch < curr_iter - curr_base:
-            curr_base += max_iter_curr_epoch
-            continue
-        arguments["epoch"] = epoch
-        for curr_i in putils.ProgressBar(range(curr_iter - curr_base, max_iter_curr_epoch)):
-            images, targets, _ = data_loader[curr_i]
-            model.train()
-            if any(len(target) < 1 for target in targets):
-                logger.error(
-                    f"Iteration={curr_iter + 1} || Image Ids used for training {_} || targets Length={[len(target) for target in targets]}")
-                continue
-            data_time = time.time() - end
-
-            curr_iter = curr_i + curr_base + 1
-            arguments["iteration"] = curr_iter
-            arguments["curr_iter_this_epoch"] = curr_i
-
-            images = images.to(device)
-            targets = targets.to(device)
-
-            loss_dict, softmax = model(images, targets)
-            train_hist['loss'][curr_iter] = float(loss_dict['loss_classifier'].cpu().detach())
-            _y = targets[:,1].cpu().detach().numpy().astype(int)
-            _yhat = (softmax[:,1].cpu().detach().numpy() > 0.5).astype(int)
-            train_hist['acc'][curr_iter] = (_yhat == _y).astype(float).mean()
-
-            losses = sum(loss for loss in loss_dict.values())
-
-            # reduce losses over all GPUs for logging purposes
-            meters.update(loss=losses, **loss_dict)
-
-            optimizer.zero_grad()
-            # Note: If mixed precision is not used, this ends up doing nothing
-            # Otherwise apply loss scaling for mixed-precision recipe
-            with amp.scale_loss(losses, optimizer) as scaled_losses:
-                scaled_losses.backward()
-            optimizer.step()
-
-            batch_time = time.time() - end
-            end = time.time()
-            meters.update(time=batch_time, data=data_time)
-
-            eta_seconds = meters.time.global_avg * (max_iter_curr_epoch - curr_iter)
-            eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
-
-            if curr_iter % 20 == 0:
-                #ipdb.set_trace()
-                logger.info(
-                    meters.delimiter.join(
-                        [
-                            "ratio: {ratio}",
-                            "eta: {eta}",
-                            "iter: {iter}",
-                            "{meters}",
-                            "lr: {lr:.6f}",
-                            "max mem: {memory:.0f}",
-                        ]
-                    ).format(
-                        ratio=curr_ratio,
-                        eta=eta_string,
-                        iter=curr_iter,
-                        meters=str(meters),
-                        lr=optimizer.param_groups[0]["lr"],
-                        memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0,
-                    )
-                )
-
-                if scheduler is not None:
-                    #scheduler.step(curr_i)
-                    scheduler.step(curr_iter // 20)
-                    # scheduler.step_wrap(curr_iter)
-                    # scheduler.step_iter(arguments["epoch"], arguments["curr_iter_this_epoch"])
-
-                if curr_iter % 200 == 0:
-                    val_ret = run_test(model, cfg, args, which='valid', ratio=curr_ratio, component=args.comp)
-                    _thres, val_ret['F1'] = putils.get_F1(val_ret['y_pred'], val_ret['y'], ratio=55./curr_ratio)
-                    for k in ['loss','acc','F1']: val_hist[k][curr_iter] = val_ret[k]
-                    print(val_ret)
-                    #if best_val_loss is None or val_ret['loss'] < best_val_loss:
-                    if best_val_F1 is None or val_ret['F1'] > best_val_F1:
-                        best_val_F1, best_val_iter = val_ret['F1'], curr_iter
-                        #best_val_loss, best_val_iter = val_ret['loss'], curr_iter
-                        if val_ret['F1'] > 0.5 and curr_ratio > 1: checkpointer.save("model_best-%d"%epoch, **arguments)
-                        #if curr_ratio > 1: checkpointer.save("model_best-%d"%epoch, **arguments)
-            if curr_iter % checkpoint_period == 0:
-                checkpointer.save("model_{:d}-{:07d}".format(epoch, curr_iter), **arguments)
-            #scheduler.step_iter(arguments["epoch"], arguments["curr_iter_this_epoch"])
-        if os.path.isfile(os.path.join(checkpointer.save_dir, "model_best-%d.pth"%epoch)):
-            arguments = checkpointer.load(os.path.join(checkpointer.save_dir, "model_best-%d.pth"%epoch))
-        ret = run_test(model, cfg, args, which='test', ratio=None, component=args.comp)
-        val_ret = run_test(model, cfg, args, which='valid', ratio=None, component=args.comp)
-        ret = {"test": ret, "val":val_hist, "train":train_hist, 'val_ret':val_ret}
-        curr_base += max_iter_curr_epoch
-
-        to_pickle(ret, os.path.join(cfg.OUTPUT_DIR, "results", "epoch%d.pkl"%epoch))
-
-    checkpointer.save("model_final", **arguments)
-
-    total_training_time = time.time() - start_training_time
-    total_time_str = str(datetime.timedelta(seconds=total_training_time))
-    logger.info(
-        "Total training time: {} ({:.4f} s / it)".format(
-            total_time_str, total_training_time / (max_iter_curr_epoch)
-        )
-    )
-
-def do_train2(
-        args,
-        model,
-        optimizer,
-        scheduler,
-        checkpointer,
-        device,
-        checkpoint_period,
-        arguments,
         eval_step=100,
         oversample_pos=True
 ):
@@ -354,7 +212,7 @@ def train(cfg, args):
     if args.eval_only:
         return eval(cfg, args, model, checkpointer)
 
-    do_train2(
+    do_train(
         args,
         model,
         optimizer,
@@ -396,7 +254,7 @@ def run_test(model, cfg, args, weight=None, data_loader=None, **kwargs):
     return ret
 
 class DEEPSZ_eval(object):
-    def __init__(self, path = '/media/zhen/Data/Research/deepsz/deepszmaster/deepsz/data/maps/split2_10x'):
+    def __init__(self, path = putils.VARYING_DIST_DATA_PATH):
         self.data_path = path
         self.map_component_dir = os.path.join(self.data_path, 'components', 'skymap(with noise)')
         self.batch_size = 128
@@ -426,12 +284,19 @@ class DEEPSZ_eval(object):
 
 
 def eval(cfg, args, model, checkpointer):
+    """
+    This function is only used to generate predictions on cutouts as
+    :param cfg:
+    :param args:
+    :param model:
+    :param checkpointer:
+    :return:
+    """
     arguments = checkpointer.load(os.path.join(checkpointer.save_dir,
                                                "model_best-%d.pth" % args.eval_epoch))
     split_id = 2 if "pytorch_2" in cfg.OUTPUT_DIR else 1
     #output_dir = "/media/zhen/Data/Research/deepsz/deepszmaster/deepsz/data/maps/split%d_10x"%split_id
     output_dir = "/media/zhen/Research/gitRes/deepsz/data/maps/split%d_10x" % split_id
-    ipdb.set_trace()
     dataloader = DEEPSZ_eval(path=output_dir)
     ret = run_test(model, cfg, None, data_loader=dataloader)
     dataloader.labels['y_pred'] = ret['y_pred'][:len(dataloader.labels)]
@@ -522,7 +387,6 @@ def main():
                                                                                                               args.comp))
     if not args.oversample_pos:
         output_path = os.path.join(os.path.dirname(output_path), 'nooversample_%s'%os.path.basename(output_path))
-        #ipdb.set_trace()
     cfg.merge_from_list(["OUTPUT_DIR", output_path])
     cfg.freeze()
 
