@@ -7,11 +7,10 @@ import os
 
 try:
     sys.path.append(os.path.abspath("../.."))
-    from global_settings import BASE_CNN_DIR, DATA_PATH, VARYING_DIST_DATA_PATH, CACHE_CNNFAILURE, FULL_DATA_PATH, FULL_DATA_LABEL_PATH
+    from global_settings import DATA_PATH, VARYING_DIST_DATA_PATH, CACHE_CNNFAILURE, FULL_DATA_PATH, FULL_DATA_LABEL_PATH
 except Exception as err:
     raise err
     print(err)
-    BASE_CNN_DIR = '/media/zhen/Data'
     DATA_PATH = "/media/zhen/Research/deepsz/"
     VARYING_DIST_DATA_PATH = '/media/zhen/Research/gitRes/deepsz_clean/deepsz/data/maps/split2_10x'
     CACHE_CNNFAILURE = '/media/zhen/Research/gitRes/deepsz_clean/deepsz/data/cache/CNNFailures.pkl'
