@@ -239,10 +239,11 @@ def run_test(model, cfg, args, weight=None, data_loader=None, **kwargs):
     losses = []
     for iteration in putils.ProgressBar(range(len(data_loader)),taskname="test"):
         images,targets, _ = data_loader[iteration]
-        loss_dict, softmax = model.forward(images.to(device), targets.to(device), weight=weight)
+        loss_dict, ll = model.forward(images.to(device), targets.to(device), weight=weight, get_softmax=False)
         losses.append(float(loss_dict['loss_classifier'].cpu().detach()))
-        y_preds.append(softmax[:,1].cpu().detach().numpy())
+        y_preds.append(ll[:,1].cpu().detach().numpy())
         ys.append(targets[:, 1].detach().numpy())
+        ipdb.set_trace()
 
     ret = {"y_pred":np.concatenate(y_preds),
            "y":np.concatenate(ys).astype(int),
@@ -365,7 +366,6 @@ def main():
     )
 
     args = parser.parse_args()
-
     num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
     args.distributed = False
 
